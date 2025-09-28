@@ -20,6 +20,7 @@ from pathlib import Path
 import re
 from collections import defaultdict
 from typing import Dict
+import math
 
 PINYIN_TONE_RE = re.compile(r'([a-z]+)[1-5]$')
 
@@ -141,6 +142,42 @@ def build_char_frequency(word_freq: Dict[str, int]) -> Dict[str, int]:
     return dict(char_freq)
 
 
+def build_word_bigram_bonus(word_freq: Dict[str, int], min_count: int = 20, scale: float = 0.5) -> Dict[str, float]:
+    """从词频构建字 bigram 奖励，用于提升常见多字词概率。"""
+    bigram_counts = defaultdict(int)
+    for word, count in word_freq.items():
+        if count <= 0 or len(word) < 2:
+            continue
+        chars = [ch for ch in word if '\u4e00' <= ch <= '\u9fff']
+        if len(chars) < 2:
+            continue
+        for i in range(len(chars) - 1):
+            pair = chars[i] + chars[i + 1]
+            bigram_counts[pair] += count
+
+    bonus_map: Dict[str, float] = {}
+    if not bigram_counts:
+        return bonus_map
+
+    # 归一化：使用 log(1 + count / min_count) * scale。
+    for pair, count in bigram_counts.items():
+        if count < min_count:
+            continue
+        bonus = math.log1p(count / max(min_count, 1)) * scale
+        bonus_map[pair] = bonus
+
+    # 针对高频但语料缺失的生活化短语做人工兜底，避免被不常见字串压制。
+    manual_boosts = {
+        '你行': 3.0,  # 保证 “你行...” 序列优先于 “逆性...” 等同音替代
+        '不行': 3.5,  # 让 “不行” 明显强于 “不幸”等候选
+    }
+    for pair, value in manual_boosts.items():
+        prev = bonus_map.get(pair)
+        if prev is None or value > prev:
+            bonus_map[pair] = value
+    return bonus_map
+
+
 def build_base_pinyin_map(char_to_pinyins, pinyin_tone_to_chars, char_priority: Dict[str, int] | None = None):
     base_candidates = defaultdict(set)
     # from tonepy
@@ -169,6 +206,7 @@ def load_all(usrs_dir: Path):
     hsk = load_hsk_pos(usrs_dir / 'HSK词性表.txt')
     word_freq = load_word_freq(usrs_dir / 'count.out')
     char_freq = build_char_frequency(word_freq)
+    word_bigram_bonus = build_word_bigram_bonus(word_freq)
     base_map = build_base_pinyin_map(chara, tonepy, char_freq)
     return {
         'char_to_pinyins': chara,
@@ -178,6 +216,7 @@ def load_all(usrs_dir: Path):
         'hsk_word_pos': {k: list(v) for k, v in hsk.items()},
         'word_frequency': word_freq,
         'char_frequency': char_freq,
+        'word_bigram_bonus': word_bigram_bonus,
     }
 
 if __name__ == '__main__':

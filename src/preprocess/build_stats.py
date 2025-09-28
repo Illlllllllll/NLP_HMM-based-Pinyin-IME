@@ -112,6 +112,7 @@ def attach_pinyin_emission(unigram: Counter, base_map: dict, char_prior: dict | 
                 emit[ch][py] += smoothed
     
     # 手动提升特定字符的发射概率（如"你"在"ni"上）
+    '''
     manual_boosts = {
         ('你', 'ni'): 5000,  # 额外增加计数
         ('的', 'de'): 3000,
@@ -121,7 +122,7 @@ def attach_pinyin_emission(unigram: Counter, base_map: dict, char_prior: dict | 
     for (ch, py), boost in manual_boosts.items():
         if ch in emit and py in char_to_pinyin.get(ch, set()):
             emit[ch][py] += boost
-    
+    '''
     return emit
 
 def save_counter_json(counter: Counter, path: Path):

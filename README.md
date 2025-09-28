@@ -36,6 +36,7 @@
 - `src/preprocess/load_lexicons.py`：聚合 `usrs/` 目录下字典资源并生成 `lexicon_aggregate.json`。
 - `src/preprocess/build_stats.py`：从语料统计 unigram/bigram/发射计数，支持字频先验回退。
 - `src/cli/infer.py`：命令行推理入口。
+- `src/evaluation/metrics.py`：评估模块，计算句子准确率、字符准确率、字符错误率等指标。
 - `UserApp.py`：PyQt6 图形界面，支持批量解码与自动准备。
 
 ## 环境准备
@@ -61,6 +62,11 @@ python -m src.preprocess.build_stats --corpus usrs/peopledaily/PeopleDaily199801
 
 # 3. 运行推理
 python -m src.cli.infer "ni hao" --pinyin-map resources/lexicon_aggregate.json --hmm resources/hmm_params.json
+
+# 4. 评估性能（可选）
+python -m src.evaluation.metrics --pinyin testword.txt --ref testword_ev.txt --lexicon resources/lexicon_aggregate.json --hmm-params resources/hmm_params.json --verbose
+# 或使用快速评估脚本
+python -m src.evaluation.evaluate_quick
 ```
 
 ## 图形界面
@@ -89,7 +95,7 @@ Notebook 用于探索式分析，可在 VS Code 或 Jupyter 中打开 `notebooks
 2. 完善测试集并编写 `pytest` 用例（CLI/GUI 解码结果、Top-K 顺序等）。
 3. 支持增量更新：追加语料后快速刷新统计与 HMM 参数。
 4. 优化 GUI：支持结果导出、进度条、错误高亮等高级功能。
-5. 评估指标：实现准确率/字错误率脚本并在 README 中记录基准结果。
+5. 扩展评估集：收集更多测试样本并建立标准化的评估基准。
 
 ## 数据与隐私
 大规模语料请放入 `data/`，默认 `.gitignore`，只提交衍生统计 JSON（<10MB）。

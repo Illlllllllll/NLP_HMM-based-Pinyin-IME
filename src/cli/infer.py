@@ -28,13 +28,20 @@ def main():
     pinyin_seq: List[str] = args.pinyin.strip().split()
     raw_map = load_pinyin_map(Path(args.pinyin_map))
     # 若是聚合 lexicon，取其 base_pinyin_to_chars 字段
+    word_bigram_bonus = None
     if 'base_pinyin_to_chars' in raw_map and isinstance(raw_map['base_pinyin_to_chars'], dict):
         pinyin_map = raw_map['base_pinyin_to_chars']
+        word_bigram_bonus = raw_map.get('word_bigram_bonus')
     else:
         pinyin_map = raw_map
     hmm = HMMParams.load(Path(args.hmm))
 
-    result = viterbi_decode(pinyin_seq, pinyin_map, hmm)
+    # 将 bigram 奖励转换为 {pair: bonus}
+    bigram_bonus = None
+    if isinstance(word_bigram_bonus, dict):
+        bigram_bonus = {str(k): float(v) for k, v in word_bigram_bonus.items()}
+
+    result = viterbi_decode(pinyin_seq, pinyin_map, hmm, bigram_bonus=bigram_bonus)
     print(result)
 
 if __name__ == '__main__':

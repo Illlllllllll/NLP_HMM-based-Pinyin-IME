@@ -9,6 +9,7 @@
 	- `hsk_word_pos`（HSK 词 -> 词性集合）
 	- `word_frequency`（常用词 -> 频次，来自 `usrs/count.out`）
 	- `char_frequency`（汉字 -> 频次先验，由词频累积）
+	- `word_bigram_bonus`（常见双字词奖励，用于解码时提升多字词概率）
 - `freq_unigram.json`: 字 unigram 计数（`build_stats.py`）。
 - `freq_bigram.json`: 字 bigram 计数（`build_stats.py`）。
 - `freq_emit.json`: (char -> {pinyin: count}) 发射统计（当前简单复制策略）。

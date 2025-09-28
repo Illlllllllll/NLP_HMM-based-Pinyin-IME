@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, Qt
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -104,11 +105,20 @@ class DecodeWorker(QObject):
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, base_map: Dict[str, list], hmm: HMMParams, input_path: Path, k: int, beam: int):
+    def __init__(
+        self,
+        base_map: Dict[str, list],
+        hmm: HMMParams,
+        input_path: Path,
+    reference_path: Optional[Path],
+        k: int,
+        beam: int,
+    ):
         super().__init__()
         self.base_map = base_map
         self.hmm = hmm
         self.input_path = input_path
+        self.reference_path = reference_path
         self.k = k
         self.beam = beam
 
@@ -116,28 +126,75 @@ class DecodeWorker(QObject):
         try:
             lines = self.input_path.read_text(encoding='utf-8').splitlines()
         except Exception as exc:  # pylint: disable=broad-except
-            self.error.emit(f'读取失败: {exc}')
+            self.error.emit(f'读取测试文件失败: {exc}')
             return
 
+        ref_lines: Optional[list[str]] = None
+        if self.reference_path:
+            try:
+                ref_lines = self.reference_path.read_text(encoding='utf-8').splitlines()
+            except Exception as exc:  # pylint: disable=broad-except
+                self.error.emit(f'读取验证文件失败: {exc}')
+                return
+
         outputs: list[str] = []
+        matched = 0
+        compared = 0
+        total_lines = len(lines)
+        total_refs = len(ref_lines) if ref_lines is not None else 0
+
         for idx, line in enumerate(lines, 1):
             raw_line = line.strip()
+            ref_text = ''
+            if ref_lines is not None and idx - 1 < total_refs:
+                ref_text = ref_lines[idx - 1].strip()
+            header = f'[{idx}] {raw_line or "<空行>"}'
+
             if not raw_line:
+                if ref_lines is not None:
+                    outputs.append(f'{header}\n  REF: {ref_text or "<缺失>"}\n  <跳过空行>')
+                else:
+                    outputs.append(f'{header}\n  <跳过空行>')
                 continue
+
             seq = raw_line.split()
             topk = viterbi_topk(seq, self.base_map, self.hmm, k=self.k, beam_size=self.beam)
-            header = f'[{idx}] {raw_line}'
             if not topk:
-                outputs.append(f'{header}\n  <无结果>')
+                if ref_lines is not None:
+                    outputs.append(f'{header}\n  <无结果>\n  REF: {ref_text or "<缺失>"}')
+                else:
+                    outputs.append(f'{header}\n  <无结果>')
                 continue
+
             best_seq, best_score = topk[0]
-            block = [f'{header}\n  BEST: {best_seq} (logP={best_score:.2f})']
+            status = '✓' if ref_text and best_seq == ref_text else '✗'
+            if ref_text:
+                compared += 1
+                if best_seq == ref_text:
+                    matched += 1
+
+            block = [
+                f'{header} {status if ref_text else ""}'.strip(),
+                f'  BEST: {best_seq} (logP={best_score:.2f})',
+            ]
+            if ref_lines is not None:
+                block.append(f'  REF: {ref_text or "<缺失>"}')
             for cand, score in topk[1:]:
                 block.append(f'    ALT: {cand} (logP={score:.2f})')
             outputs.append('\n'.join(block))
             self.progress.emit(f'已解码 {idx} 行')
 
+        summary: list[str] = []
+        if compared:
+            summary.append(f'匹配准确率: {matched}/{compared} ({matched / compared * 100:.2f}%)')
+        if ref_lines is not None and total_lines != total_refs:
+            summary.append(f'警告: 测试行数({total_lines}) 与参考行数({total_refs}) 不一致。')
+        if ref_lines is None:
+            summary.append('提示: 未提供验证文件，已跳过预测结果对比。')
+
         text = '\n'.join(outputs)
+        if summary:
+            text += ('\n\n' if text else '') + '--- 汇总 ---\n' + '\n'.join(summary)
         if text:
             text += '\n\n--- 完成 ---'
         else:
@@ -150,11 +207,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle('拼音→汉字 解码工具（PyQt）')
         self.resize(960, 680)
-
         self.base_map: Dict[str, list] = {}
         self.char_prior: Dict[str, int] = {}
         self.hmm: Optional[HMMParams] = None
         self.input_path: Optional[Path] = None
+        self.reference_path: Optional[Path] = None
 
         self.prepare_thread: Optional[QThread] = None
         self.decode_thread: Optional[QThread] = None
@@ -169,27 +226,66 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
 
-        root_layout = QVBoxLayout(central)
+        root_layout = QHBoxLayout(central)
         root_layout.setContentsMargins(14, 14, 14, 14)
-        root_layout.setSpacing(12)
+        root_layout.setSpacing(16)
+
+        self.image_label = QLabel('serena.jpg\n未找到')
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setFixedSize(360, 640)
+        self.image_label.setStyleSheet('background:#111827; color:#f9fafb; border-radius:12px; font-family:Consolas;')
+        self._load_showcase_image()
+        root_layout.addWidget(self.image_label, 0, Qt.AlignmentFlag.AlignTop)
+
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(12)
 
         top_layout = QHBoxLayout()
-        top_layout.setSpacing(10)
+        top_layout.setSpacing(12)
 
-        self.choose_btn = QPushButton('导入拼音 TXT')
-        self.choose_btn.clicked.connect(self.choose_file)  # type: ignore[arg-type]
-        self.choose_btn.setMinimumHeight(36)
-        self.choose_btn.setStyleSheet('QPushButton { background:#3b82f6; color:white; padding:6px 16px; border-radius:6px; }'
-                                      'QPushButton:disabled { background:#9ca3af; }'
-                                      'QPushButton:hover { background:#1d4ed8; }')
+        pinyin_box = QVBoxLayout()
+        pinyin_box.setSpacing(4)
+        self.load_pinyin_btn = QPushButton('导入测试文件')
+        self.load_pinyin_btn.clicked.connect(self.choose_pinyin_file)  # type: ignore[arg-type]
+        self.load_pinyin_btn.setMinimumHeight(36)
+        self.load_pinyin_btn.setStyleSheet('QPushButton { background:#3b82f6; color:white; padding:6px 16px; border-radius:6px; }'
+                                           'QPushButton:disabled { background:#9ca3af; }'
+                                           'QPushButton:hover { background:#1d4ed8; }')
+        self.pinyin_path_label = QLabel('未选择')
+        self.pinyin_path_label.setStyleSheet('color:#6b7280; font-family:Consolas;')
+        self.pinyin_path_label.setWordWrap(True)
+        pinyin_box.addWidget(self.load_pinyin_btn)
+        pinyin_box.addWidget(self.pinyin_path_label)
 
+        ref_box = QVBoxLayout()
+        ref_box.setSpacing(4)
+        self.load_ref_btn = QPushButton('导入验证文件')
+        self.load_ref_btn.clicked.connect(self.choose_reference_file)  # type: ignore[arg-type]
+        self.load_ref_btn.setMinimumHeight(36)
+        self.load_ref_btn.setStyleSheet('QPushButton { background:#6366f1; color:white; padding:6px 16px; border-radius:6px; }'
+                                        'QPushButton:disabled { background:#9ca3af; }'
+                                        'QPushButton:hover { background:#4f46e5; }')
+        self.ref_path_label = QLabel('未选择')
+        self.ref_path_label.setStyleSheet('color:#6b7280; font-family:Consolas;')
+        self.ref_path_label.setWordWrap(True)
+        ref_box.addWidget(self.load_ref_btn)
+        ref_box.addWidget(self.ref_path_label)
+
+        params_layout = QHBoxLayout()
+        params_layout.setSpacing(8)
         self.k_edit = QLineEdit('5')
-        self.k_edit.setFixedWidth(60)
+        self.k_edit.setFixedWidth(50)
+        self.k_edit.setFixedHeight(40)
         self.k_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
         self.beam_edit = QLineEdit('5')
-        self.beam_edit.setFixedWidth(60)
+        self.beam_edit.setFixedWidth(50)
+        self.beam_edit.setFixedHeight(40)
         self.beam_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        params_layout.addWidget(QLabel('Top-K:'))
+        params_layout.addWidget(self.k_edit)
+        params_layout.addSpacing(8)
+        params_layout.addWidget(QLabel('Beam:'))
+        params_layout.addWidget(self.beam_edit)
 
         self.decode_btn = QPushButton('解码')
         self.decode_btn.clicked.connect(self.start_decode)  # type: ignore[arg-type]
@@ -202,13 +298,9 @@ class MainWindow(QMainWindow):
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.status_label.setStyleSheet('color:#374151; font-family:Consolas;')
 
-        top_layout.addWidget(self.choose_btn)
-        top_layout.addWidget(QLabel('Top-K:'))
-        top_layout.addWidget(self.k_edit)
-        top_layout.addSpacing(8)
-        top_layout.addWidget(QLabel('Beam:'))
-        top_layout.addWidget(self.beam_edit)
-        top_layout.addSpacing(12)
+        top_layout.addLayout(pinyin_box)
+        top_layout.addLayout(ref_box)
+        top_layout.addLayout(params_layout)
         top_layout.addWidget(self.decode_btn)
         top_layout.addStretch(1)
         top_layout.addWidget(self.status_label)
@@ -217,8 +309,27 @@ class MainWindow(QMainWindow):
         self.output.setReadOnly(True)
         self.output.setStyleSheet('font-family:Consolas; font-size:12pt;')
 
-        root_layout.addLayout(top_layout)
-        root_layout.addWidget(self.output, stretch=1)
+        right_layout.addLayout(top_layout)
+        right_layout.addWidget(self.output, stretch=1)
+
+        root_layout.addLayout(right_layout, 1)
+
+    def _load_showcase_image(self):
+        img_path = BASE_DIR / 'serena.jpg'
+        if not img_path.exists():
+            self.image_label.setText('serena.jpg\n未找到')
+            return
+        pixmap = QPixmap(str(img_path))
+        if pixmap.isNull():
+            self.image_label.setText('无法加载图像')
+            return
+        scaled = pixmap.scaled(
+            self.image_label.width() or 360,
+            self.image_label.height() or 640,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.image_label.setPixmap(scaled)
 
     # ------------------------------------------------------------------
     def _start_prepare(self):
@@ -240,6 +351,8 @@ class MainWindow(QMainWindow):
         self.char_prior = char_prior
         self.hmm = hmm_obj  # 已是 HMMParams 实例
         self.set_status('准备完成，可以解码')
+        palette = '#16a34a'  # 绿色
+        self.status_label.setStyleSheet(f'color:{palette}; font-family:Consolas;')
         self.decode_btn.setEnabled(True)
 
     def on_prepare_error(self, message: str):
@@ -256,20 +369,27 @@ class MainWindow(QMainWindow):
         self.prepare_thread = None
 
     # ------------------------------------------------------------------
-    def choose_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择拼音 TXT', str(BASE_DIR), 'Text Files (*.txt);;All Files (*.*)')
+    def choose_pinyin_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, '选择测试拼音 TXT', str(BASE_DIR), 'Text Files (*.txt);;All Files (*.*)')
         if path:
             self.input_path = Path(path)
-            self.set_status(f'已选择：{self.input_path.name}')
+            self.pinyin_path_label.setText(self.input_path.name)
+            self.set_status(f'测试文件：{self.input_path.name}')
+
+    def choose_reference_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, '选择验证 TXT', str(BASE_DIR), 'Text Files (*.txt);;All Files (*.*)')
+        if path:
+            self.reference_path = Path(path)
+            self.ref_path_label.setText(self.reference_path.name)
+            self.set_status(f'验证文件：{self.reference_path.name}')
 
     def start_decode(self):
         if not self.base_map or self.hmm is None:
             QMessageBox.warning(self, '等待', '系统尚未准备好，请稍后再试。')
             return
         if not self.input_path or not self.input_path.exists():
-            QMessageBox.warning(self, '提醒', '请先导入有效的拼音 TXT 文件。')
+            QMessageBox.warning(self, '提醒', '请先导入测试 TXT 文件。')
             return
-
         try:
             k = int(self.k_edit.text())
             beam = int(self.beam_edit.text())
@@ -279,12 +399,17 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, '输入错误', 'Top-K 与 Beam 必须为正整数。')
             return
 
+        ref_path = self.reference_path
+        if ref_path and not ref_path.exists():
+            QMessageBox.warning(self, '提醒', '验证文件不存在，已忽略该路径。')
+            ref_path = None
+
         self.decode_btn.setEnabled(False)
         self.set_status('解码中…')
         self.output.clear()
 
         self.decode_thread = QThread(self)
-        self.decode_worker = DecodeWorker(self.base_map, self.hmm, self.input_path, k, beam)
+        self.decode_worker = DecodeWorker(self.base_map, self.hmm, self.input_path, ref_path, k, beam)
         self.decode_worker.moveToThread(self.decode_thread)
         self.decode_thread.started.connect(self.decode_worker.run)
         self.decode_worker.progress.connect(self.set_status)

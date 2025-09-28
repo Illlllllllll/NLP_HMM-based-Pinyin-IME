@@ -1,6 +1,6 @@
 """Viterbi 解码 (Top-1) 与简易 Beam/Top-K 扩展。"""
 from __future__ import annotations
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Mapping
 import math
 from heapq import nlargest
 
@@ -12,7 +12,12 @@ class HMMLike:
     def get_emit(self, ch: str, py: str) -> float: ...
 
 
-def viterbi_decode(pinyin_seq: List[str], candidates_map: Dict[str, List[str]], hmm: HMMLike) -> str:
+def viterbi_decode(
+    pinyin_seq: List[str],
+    candidates_map: Dict[str, List[str]],
+    hmm: HMMLike,
+    bigram_bonus: Optional[Mapping[str, float]] = None,
+) -> str:
     if not pinyin_seq:
         return ''
     # dp[t][char] = (score, prev_char)
@@ -41,7 +46,12 @@ def viterbi_decode(pinyin_seq: List[str], candidates_map: Dict[str, List[str]], 
             emit = hmm.get_emit(ch, py)
             for prev_ch, (prev_score, _) in prev_layer.items():
                 trans = hmm.get_trans(prev_ch, ch)
+                bonus = 0.0
+                if bigram_bonus:
+                    pair = prev_ch + ch
+                    bonus = bigram_bonus.get(pair, 0.0)
                 s = prev_score + trans + emit
+                s += bonus
                 if s > best_score:
                     best_score = s
                     best_prev = prev_ch
@@ -62,7 +72,14 @@ def viterbi_decode(pinyin_seq: List[str], candidates_map: Dict[str, List[str]], 
         prev = layer[prev][1]
     return ''.join(reversed(chars))
 
-def viterbi_topk(pinyin_seq: List[str], candidates_map: Dict[str, List[str]], hmm: HMMLike, k: int = 5, beam_size: Optional[int] = None) -> List[Tuple[str, float]]:
+def viterbi_topk(
+    pinyin_seq: List[str],
+    candidates_map: Dict[str, List[str]],
+    hmm: HMMLike,
+    k: int = 5,
+    beam_size: Optional[int] = None,
+    bigram_bonus: Optional[Mapping[str, float]] = None,
+) -> List[Tuple[str, float]]:
     """返回 Top-K 序列 (string, log_prob)。
 
     使用 Beam Search 近似：
@@ -95,7 +112,11 @@ def viterbi_topk(pinyin_seq: List[str], candidates_map: Dict[str, List[str]], hm
             for ch in cands:
                 emit = hmm.get_emit(ch, py)
                 trans = hmm.get_trans(last_char, ch)
-                new_score = score + trans + emit
+                bonus = 0.0
+                if bigram_bonus and last_char:
+                    pair = last_char + ch
+                    bonus = bigram_bonus.get(pair, 0.0)
+                new_score = score + trans + emit + bonus
                 new_beam.append((new_score, seq_chars + [ch], ch))
         if not new_beam:
             break

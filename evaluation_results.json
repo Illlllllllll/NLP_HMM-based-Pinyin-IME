@@ -1,0 +1,25 @@
+{
+  "sentence_accuracy": 0.5714285714285714,
+  "character_accuracy": 0.8,
+  "character_error_rate": 0.2,
+  "top5_accuracy": 0.5714285714285714,
+  "total_sentences": 7,
+  "predictions": [
+    "吉尼态美",
+    "你们好",
+    "中华大地",
+    "不上不下",
+    "你行不行",
+    "渐渐地",
+    "试验取"
+  ],
+  "references": [
+    "鸡你太美",
+    "你们好",
+    "中华大地",
+    "不上不下",
+    "你行不行",
+    "渐渐的",
+    "试验区"
+  ]
+}
