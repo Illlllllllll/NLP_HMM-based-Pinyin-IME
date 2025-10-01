@@ -78,6 +78,29 @@ python UserApp.py
 2. 点击“导入拼音 TXT”，选择每行空格分隔拼音的文本文件。
 3. 调整 Top-K、Beam 参数后点击“解码”，结果显示在下方滚动框中。
 
+## 增量式输入法（新功能）⭐
+
+除了批量解码（UserApp.py），现在还提供真正的增量式输入法体验：
+
+```powershell
+python IMEApp.py
+```
+
+**核心特性**：
+- **动态 UI**：默认显示图片，输入时自动显示候选框
+- **实时解码**：边输入边显示候选，无需等待完整拼音
+- **智能预测**：支持拼音前缀预测
+- **快捷操作**：数字键快速选择，空格分词，回车上屏
+
+**命令行演示**（无 GUI 环境）：
+```powershell
+python demo_incremental.py
+```
+
+详细文档：
+- [IME_README.md](IME_README.md) - 完整使用指南
+- [IME_UI_DESIGN.md](IME_UI_DESIGN.md) - UI 设计规范
+
 ## Notebook
 Notebook 用于探索式分析，可在 VS Code 或 Jupyter 中打开 `notebooks/01_build_dictionary.ipynb`、`02_viterbi_demo.ipynb`。
 
